@@ -25,6 +25,20 @@ impl Direction {
     }
 }
 
+impl<T> From<T> for Direction
+where
+    T: AsRef<str> + std::fmt::Display,
+{
+    fn from(s: T) -> Self {
+        match s.as_ref() {
+            "inout" => Direction::Inout,
+            "in" => Direction::Input,
+            "out" => Direction::Output,
+            _ => panic!("Unknown port direction {}", s),
+        }
+    }
+}
+
 /// Ports can come from Cells or Groups
 #[derive(Debug, Clone)]
 pub enum PortParent {

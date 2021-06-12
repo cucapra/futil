@@ -1,0 +1,16 @@
+[package]
+name = "calyx-py"
+version = "0.1.0"
+authors = ["Rachit Nigam <rachit.nigam12@gmail.com>"]
+edition = "2018"
+
+[lib]
+name = "calyx"
+crate-type = ["cdylib"]
+
+[dependencies]
+calyx = { path = "../calyx" }
+
+[dependencies.pyo3]
+version = "0.12.3"
+features = ["extension-module"]
