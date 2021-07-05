@@ -25,6 +25,7 @@ mod static_timing;
 mod synthesis_papercut;
 mod top_down_compile_control;
 mod well_formed;
+mod schedule;
 
 pub use clk_insertion::ClkInsertion;
 pub use collapse_control::CollapseControl;
