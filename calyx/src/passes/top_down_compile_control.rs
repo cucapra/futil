@@ -1,11 +1,10 @@
-use super::{math_utilities::get_bit_width_from, schedule::Schedule};
+use super::schedule::Schedule;
 use crate::ir::{
     self,
     traversal::{Action, Named, VisResult, Visitor},
-    LibrarySignatures, RRC,
+    LibrarySignatures,
 };
 use crate::{build_assignments, guard, structure};
-use itertools::Itertools;
 use std::rc::Rc;
 
 /// Recursively calcuate the states for each child in a control sub-program.
@@ -236,105 +235,20 @@ fn calculate_states(
     }
 }
 
-/// Implement a given [Schedule] and return the name of the [`ir::Group`](crate::ir::Group) that
-/// implements it.
-fn realize_schedule(
-    schedule: Schedule,
-    builder: &mut ir::Builder,
-) -> RRC<ir::Group> {
-    schedule.validate();
-    let final_state = schedule.last_state();
-    let fsm_size =
-        get_bit_width_from(final_state + 1 /* represent 0..final_state */);
-    structure!(builder;
-        let fsm = prim std_reg(fsm_size);
-        let signal_on = constant(1, 1);
-        let last_state = constant(final_state, fsm_size);
-        let first_state = constant(0, fsm_size);
-    );
-
-    // The compilation group
-    let group = builder.add_group("tdcc");
-
-    // Enable assignments
-    group.borrow_mut().assignments.extend(
-        schedule
-            .enables
-            .into_iter()
-            .sorted_by(|(k1, _), (k2, _)| k1.cmp(k2))
-            .flat_map(|(state, mut assigns)| {
-                let state_const = builder.add_constant(state, fsm_size);
-                let state_guard =
-                    guard!(fsm["out"]).eq(guard!(state_const["out"]));
-                assigns.iter_mut().for_each(|asgn| {
-                    asgn.guard.update(|g| g.and(state_guard.clone()))
-                });
-                assigns
-            }),
-    );
-
-    // Transition assignments
-    group.borrow_mut().assignments.extend(
-        schedule.transitions.into_iter().flat_map(|(s, e, guard)| {
-            structure!(builder;
-                let end_const = constant(e, fsm_size);
-                let start_const = constant(s, fsm_size);
-            );
-            let ec_borrow = end_const.borrow();
-            let trans_guard =
-                guard!(fsm["out"]).eq(guard!(start_const["out"])) & guard;
-
-            vec![
-                builder.build_assignment(
-                    fsm.borrow().get("in"),
-                    ec_borrow.get("out"),
-                    trans_guard.clone(),
-                ),
-                builder.build_assignment(
-                    fsm.borrow().get("write_en"),
-                    signal_on.borrow().get("out"),
-                    trans_guard,
-                ),
-            ]
-        }),
-    );
-
-    // Done condition for group
-    let last_guard = guard!(fsm["out"]).eq(guard!(last_state["out"]));
-    let done_assign = builder.build_assignment(
-        group.borrow().get("done"),
-        signal_on.borrow().get("out"),
-        last_guard.clone(),
-    );
-    group.borrow_mut().assignments.push(done_assign);
-
-    // Cleanup: Add a transition from last state to the first state.
-    let mut reset_fsm = build_assignments!(builder;
-        fsm["in"] = last_guard ? first_state["out"];
-        fsm["write_en"] = last_guard ? signal_on["out"];
-    );
-    builder
-        .component
-        .continuous_assignments
-        .append(&mut reset_fsm);
-
-    group
-}
-
 /// **Core lowering pass.**
 /// Compiles away the control programs in components into purely structural
 /// code using an finite-state machine (FSM).
 ///
 /// Lowering operates in two steps:
-/// 1. Compile all [`ir::Par`](crate::ir::Par) control sub-programs into a
-/// single [`ir::Enable`][enable] of a group that runs all children
+/// 1. Compile all [ir::Par] control sub-programs into a
+/// single [ir::Enable] of a group that runs all children
 /// to completion.
-/// 2. Compile the top-level control program into a single [`ir::Enable`][enable].
+/// 2. Compile the top-level control program into a single [ir::Enable].
 ///
 /// ## Compiling non-`par` programs
 /// Assuming all `par` statements have already been compiled in a control
 /// sub-program, we can build a schedule for executing it. We calculate a
-/// schedule by assigning an FSM state to each leaf node (an [`ir::Enable`][enable])
+/// schedule by assigning an FSM state to each leaf node (an [ir::Enable])
 /// as a guard condition. Each control program node also defines a transition
 /// function over the states calculated for its children.
 ///
@@ -352,8 +266,6 @@ fn realize_schedule(
 /// ## Compilation guarantee
 /// At the end of this pass, the control program will have no more than one
 /// group enable in it.
-///
-/// [enable]: crate::ir::Enable
 #[derive(Default)]
 pub struct TopDownCompileControl;
 
@@ -405,7 +317,7 @@ impl Visitor for TopDownCompileControl {
                         &mut schedule,
                         &mut builder,
                     );
-                    realize_schedule(schedule, &mut builder)
+                    schedule.realize_schedule(&mut builder)
                 }
             };
 
@@ -464,7 +376,7 @@ impl Visitor for TopDownCompileControl {
         comp: &mut ir::Component,
         sigs: &LibrarySignatures,
     ) -> VisResult {
-        // Do not try to compile an enable
+        // Do not try to compile an enable or an empty control
         if matches!(
             *comp.control.borrow(),
             ir::Control::Enable(..) | ir::Control::Empty(..)
@@ -482,7 +394,7 @@ impl Visitor for TopDownCompileControl {
             &mut schedule,
             &mut builder,
         );
-        let comp_group = realize_schedule(schedule, &mut builder);
+        let comp_group = schedule.realize_schedule(&mut builder);
 
         Ok(Action::Change(ir::Control::enable(comp_group)))
     }
