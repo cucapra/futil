@@ -1,0 +1,6 @@
+---CODE---
+1
+---STDERR---
+Error: Malformed Structure: 
+7 |    group a {
+  |          ^ Group with constant done condition not allowed inside normal control operators

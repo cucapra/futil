@@ -82,6 +82,31 @@ impl Visitor for WellFormed {
         _ctx: &LibrarySignatures,
     ) -> VisResult {
         self.used_groups.insert(s.group.clone_name());
+
+        let group = s.group.borrow();
+        let done_assign = group
+            .assignments
+            .iter()
+            .find(|assign| {
+                let dst = assign.dst.borrow();
+                dst.is_hole() && *group.name() == dst.get_parent_name()
+            })
+            .expect("Group has no done condition");
+
+        // A group with a constant done condition are not allowed within
+        // normal control operators.
+        if group
+            .attributes
+            .get("static")
+            .map(|v| *v == 0)
+            .unwrap_or(false)
+            || (done_assign.guard.is_true()
+                && done_assign.src.borrow().is_constant(1, 1))
+        {
+            return Err(Error::MalformedStructure(group.name().fmt_err("Group with constant done condition not allowed inside normal control operators")));
+        }
+
+
         Ok(Action::Continue)
     }
 
