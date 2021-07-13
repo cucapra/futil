@@ -91,7 +91,9 @@ impl Visitor for WellFormed {
                 let dst = assign.dst.borrow();
                 dst.is_hole() && *group.name() == dst.get_parent_name()
             })
-            .expect("Group has no done condition");
+            .map(|asgn| {
+                asgn.guard.is_true() && asgn.src.borrow().is_constant(1, 1)
+            });
 
         // A group with a constant done condition are not allowed within
         // normal control operators.
@@ -100,12 +102,10 @@ impl Visitor for WellFormed {
             .get("static")
             .map(|v| *v == 0)
             .unwrap_or(false)
-            || (done_assign.guard.is_true()
-                && done_assign.src.borrow().is_constant(1, 1))
+            || done_assign.unwrap_or(false)
         {
             return Err(Error::MalformedStructure(group.name().fmt_err("Group with constant done condition not allowed inside normal control operators")));
         }
-
 
         Ok(Action::Continue)
     }

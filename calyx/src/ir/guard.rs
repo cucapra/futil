@@ -133,6 +133,11 @@ impl Guard {
         }
     }
 
+    /// Returns true if this is a `Guard::True`.
+    pub fn is_true(&self) -> bool {
+        matches!(self, Guard::True)
+    }
+
     /// Update the guard in place. Replaces this guard with `upd(self)`.
     /// Uses `std::mem::take` for the in-place update.
     #[inline(always)]

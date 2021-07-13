@@ -29,7 +29,7 @@ impl Schedule {
             .iter()
             .sorted_by(|(k1, _), (k2, _)| k1.cmp(k2))
             .for_each(|(state, assigns)| {
-                eprintln!("======== ({}, {}) =========", state.0, state.1);
+                eprint!("({}, {}): ", state.0, state.1);
                 assigns.iter().for_each(|assign| {
                     IRPrinter::write_assignment(
                         assign,
@@ -84,6 +84,27 @@ fn seq_calculate_states(
         cur = calculate_states(stmt, cur, pre_guard, schedule, builder)
     }
     cur
+}
+
+fn if_calculate_states(
+    con: &ir::Seq,
+    cur_state: u64,
+    pre_guard: &ir::Guard,
+    schedule: &mut Schedule,
+    builder: &mut ir::Builder,
+) -> u64 {
+    structure!(builder;
+        let signal_on = constant(1, 1);
+        let signal_off = constant(0, 1);
+        let st_cs_if = prim std_reg(1);
+    );
+
+    // If the condition is defined using a combinational group, make it
+    // take one cycle.
+
+    // Compute the value in the condition and save its value in cs_if
+
+    todo!()
 }
 
 /// Compiled to:
