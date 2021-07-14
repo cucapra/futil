@@ -113,6 +113,19 @@ impl Component {
 #[derive(Debug)]
 pub struct IdList<T: GetName>(LinkedHashMap<Id, RRC<T>>);
 
+impl<T: GetName> From<Vec<RRC<T>>> for IdList<T> {
+    fn from(list: Vec<RRC<T>>) -> Self {
+        IdList(
+            list.into_iter()
+                .map(|item| {
+                    let name = item.borrow().name().clone();
+                    (name, item)
+                })
+                .collect::<LinkedHashMap<Id, RRC<T>>>(),
+        )
+    }
+}
+
 impl<T: GetName> IdList<T> {
     /// Removes all elements from the collection
     pub fn clear(&mut self) {

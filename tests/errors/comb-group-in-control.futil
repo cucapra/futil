@@ -1,0 +1,14 @@
+import "primitives/core.futil";
+component main() -> () {
+  cells {
+    r = std_reg(32);
+  }
+  wires {
+    group a {
+      a[done] = 1'd1;
+    }
+  }
+  control {
+    a;
+  }
+}
