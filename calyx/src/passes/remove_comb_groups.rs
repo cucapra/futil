@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+use std::rc::Rc;
+
 use itertools::Itertools;
 
 use crate::errors::Error;
@@ -6,9 +9,7 @@ use crate::ir::{
     traversal::{Action, Named, VisResult, Visitor},
     LibrarySignatures, RRC,
 };
-use crate::{guard, structure};
-use std::collections::HashMap;
-use std::rc::Rc;
+use crate::{analysis, guard, structure};
 
 #[derive(Default)]
 /// Transforms combinational groups, which have a constant done condition,
@@ -56,9 +57,8 @@ use std::rc::Rc;
 /// }
 /// ```
 pub struct RemoveCombGroups {
-    /// Mapping from name of a group to the ports in the group that were
-    /// read from.
-    used_ports: HashMap<ir::Id, Vec<RRC<ir::Port>>>,
+    // Mapping from (group_name, (cell_name, port_name)) -> port.
+    port_rewrite: HashMap<(ir::Id, (ir::Id, ir::Id)), RRC<ir::Port>>,
 }
 
 impl Named for RemoveCombGroups {
@@ -72,41 +72,14 @@ impl Named for RemoveCombGroups {
 }
 
 impl Visitor for RemoveCombGroups {
-    fn start_if(
-        &mut self,
-        s: &mut ir::If,
-        _comp: &mut ir::Component,
-        _sigs: &LibrarySignatures,
-    ) -> VisResult {
-        let cond_group = s.cond.borrow();
-        self.used_ports
-            .entry(cond_group.name().clone())
-            .or_default()
-            .push(Rc::clone(&s.port));
-
-        Ok(Action::Continue)
-    }
-
-    fn start_while(
-        &mut self,
-        s: &mut ir::While,
-        _comp: &mut ir::Component,
-        _sigs: &LibrarySignatures,
-    ) -> VisResult {
-        let cond_group = s.cond.borrow();
-        self.used_ports
-            .entry(cond_group.name().clone())
-            .or_default()
-            .push(Rc::clone(&s.port));
-
-        Ok(Action::Continue)
-    }
-
-    fn finish(
+    fn start(
         &mut self,
         comp: &mut ir::Component,
         sigs: &LibrarySignatures,
     ) -> VisResult {
+        let mut used_ports =
+            analysis::ControlPorts::from(&*comp.control.borrow());
+
         // Detach groups from the component
         let groups = comp.groups.drain().collect_vec();
         let mut builder = ir::Builder::new(comp, sigs);
@@ -137,7 +110,7 @@ impl Visitor for RemoveCombGroups {
 
             // Register the ports read by the combinational group's usages.
             let used_ports =
-                self.used_ports.remove(group.name()).ok_or_else(|| {
+                used_ports.remove(group.name()).ok_or_else(|| {
                     Error::MalformedStructure(format!(
                         "Values from combinational group {} never used",
                         group.name()
@@ -145,6 +118,11 @@ impl Visitor for RemoveCombGroups {
                 })?;
 
             let mut save_regs = Vec::with_capacity(used_ports.len());
+
+            // Explicitly drop group to avoid Borrow Error.
+            drop(group);
+            let mut group = group_ref.borrow_mut();
+
             for port in used_ports {
                 // Register to save port value
                 structure!(builder;
@@ -153,7 +131,7 @@ impl Visitor for RemoveCombGroups {
                 );
                 let write = builder.build_assignment(
                     comb_reg.borrow().get("in"),
-                    port,
+                    Rc::clone(&port),
                     ir::Guard::True,
                 );
                 let en = builder.build_assignment(
@@ -161,13 +139,21 @@ impl Visitor for RemoveCombGroups {
                     signal_on.borrow().get("out"),
                     ir::Guard::True,
                 );
-                group_ref.borrow_mut().assignments.push(write);
-                group_ref.borrow_mut().assignments.push(en);
+                group.assignments.push(write);
+                group.assignments.push(en);
+
+                // Define mapping from this port to the register's output
+                // value.
+                self.port_rewrite.insert(
+                    (group.name().clone(), port.borrow().canonical().clone()),
+                    Rc::clone(&comb_reg.borrow().get("out")),
+                );
+
                 save_regs.push(comb_reg);
             }
 
             // Update the done condition
-            for mut assign in group_ref.borrow_mut().assignments.iter_mut() {
+            for mut assign in group.assignments.iter_mut() {
                 let dst = assign.dst.borrow();
                 if dst.is_hole() && dst.name == "done" {
                     // The source should be the constant 1 since this is a combinational group.
@@ -180,9 +166,38 @@ impl Visitor for RemoveCombGroups {
                     );
                 }
             }
+
+            // Update the "static" attribute
+            group.attributes.insert("static", 1);
         }
         comp.groups = groups.into();
 
+        Ok(Action::Continue)
+    }
+
+    fn start_while(
+        &mut self,
+        s: &mut ir::While,
+        _comp: &mut ir::Component,
+        _sigs: &LibrarySignatures,
+    ) -> VisResult {
+        let key = (s.cond.borrow().name().clone(), s.port.borrow().canonical());
+        if let Some(new_port) = self.port_rewrite.get(&key) {
+            s.port = Rc::clone(new_port);
+        }
+        Ok(Action::Continue)
+    }
+
+    fn start_if(
+        &mut self,
+        s: &mut ir::If,
+        _comp: &mut ir::Component,
+        _sigs: &LibrarySignatures,
+    ) -> VisResult {
+        let key = (s.cond.borrow().name().clone(), s.port.borrow().canonical());
+        if let Some(new_port) = self.port_rewrite.get(&key) {
+            s.port = Rc::clone(new_port);
+        }
         Ok(Action::Continue)
     }
 }
